@@ -5,8 +5,10 @@ Mã nguồn chính của FLX10 DJ (`com.xdj.flx10test`) nằm trên Mac. Repo n�
 - **`shared/`**: Android library, chỉ dùng framework Android, cùng AGP 8.5.2 / Kotlin 1.9 / minSdk 29 như app.
   - `sd/`: đọc thẻ SD nhanh (resolve không query, liệt kê SAF song song, đệm quét, giải mã stems song song);
   - `browse/`: BROWSE chia cột, sắp xếp, MyTag từ comment, key hợp với deck MASTER hiện xanh;
-  - `ui/`: mục "Chế độ & bố cục" trong ⚙ (thay hàng nút thứ 2).
-- **`lab/`**: FLX10 Lab, app thử trên tablet: xem trước BROWSE chia cột và đo tốc độ quét, resolve, stems trên thẻ thật. Ghi LOG vào `Music/LOG/`.
+  - `ui/`: mục "Chế độ & bố cục" trong ⚙ (thay hàng nút thứ 2);
+  - `wave/`: sóng chi tiết thật (RGB 3 dải) khi zoom sâu, grid đậm, grid theo từng beat từ rekordbox, đo lệch grid;
+  - `sync/`: SYNC bấm đôi (khớp tempo + nhịp một lần rồi mở khoá), giữ tempo khi tắt SYNC, soft takeover thanh tempo.
+- **`lab/`**: FLX10 Lab, app thử trên tablet: xem trước BROWSE chia cột, màn "Sóng & grid", và đo tốc độ quét, resolve, stems, độ lệch grid trên thẻ thật. Ghi LOG vào `Music/LOG/`.
 - **`handoff/TOM-TAT-0.15.1.md`**: tóm tắt và hướng dẫn ghép vào app thật trên Mac.
 
 ## Build & test

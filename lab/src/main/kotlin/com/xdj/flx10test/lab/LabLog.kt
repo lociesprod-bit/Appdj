@@ -9,7 +9,9 @@ import java.util.Date
 import java.util.Locale
 
 /** LOG của Lab: giữ trong bộ nhớ và ghi đè file `Music/LOG/LAB_<thời gian>.log` sau mỗi thao tác. */
-class LabLog(private val onLine: (String) -> Unit) {
+class LabLog(onLine: (String) -> Unit) {
+    /** Màn hình đang hiện LOG (đổi khi chuyển giữa màn chính và màn Sóng & grid). */
+    @Volatile var onLine: (String) -> Unit = onLine
     private val lines = ArrayList<String>()
     private val time = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
     private var file: Uri? = null

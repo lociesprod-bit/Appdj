@@ -53,6 +53,25 @@ class LabTest {
     }
 
     @Test
+    fun readsEveryTempoAnchorForRequestedTracks() {
+        val multi = xml.replace(
+            """<TEMPO Inizio="0.025" Bpm="130.00" Metro="4/4" Battito="1"/>""",
+            """<TEMPO Inizio="0.025" Bpm="130.00" Metro="4/4" Battito="1"/><TEMPO Inizio="60.025" Bpm="130.00" Metro="4/4" Battito="1"/><TEMPO Inizio="120.025" Bpm="128.00" Metro="4/4" Battito="3"/>""",
+        )
+        val key = RekordboxXmlLite.matchKey("11A - Ai Chung Tinh Duoc Mai HD.wav")
+        val grids = RekordboxXmlLite.grids(ByteArrayInputStream(multi.toByteArray()), setOf(key, "missing.mp3"))
+        val g = grids[key]!!
+        assertEquals(3, g.tempos.size)
+        assertEquals(120.025, g.tempos[2].inizio, 1e-9)
+        assertEquals(128.0, g.tempos[2].bpm, 1e-9)
+        assertEquals(3, g.tempos[2].battito)
+        assertEquals("WAV File", g.kind)
+        assertEquals(1, grids.size)
+        val grid = com.xdj.flx10test.wave.BeatGrid.fromTempos(g.tempos, 300.0)!!
+        assertEquals(128.0, grid.bpmAt(200.0), 1e-6)
+    }
+
+    @Test
     fun matchKeyIgnoresUnicodeFormAndCase() {
         val nfd = Normalizer.normalize("Bên Trên Tầng Lầu.mp3", Normalizer.Form.NFD)
         assertEquals(RekordboxXmlLite.matchKey("BÊN TRÊN TẦNG LẦU.mp3"), RekordboxXmlLite.matchKey(nfd))

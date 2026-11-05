@@ -109,6 +109,7 @@ class LabActivity : Activity() {
         columns = browserPrefs.columns
         sort = browserPrefs.sort
         log = LabLog { line -> ui.post { appendLog(line) } }
+        LabSession.log = log
         setContentView(buildUi())
         header.columns = columns
         header.sort = sort
@@ -163,6 +164,8 @@ class LabActivity : Activity() {
         add(filterButton, action = false)
         add(button("Đo resolve") { runAction("Đo resolve") { benchResolve() } })
         add(button("Đo stems") { runAction("Đo stems") { benchStems() } })
+        add(button("Sóng & grid") { openWave() })
+        add(button("Đo lệch grid") { runAction("Đo lệch grid") { benchGrid() } })
         add(button("SAF vs File") { safVsFile() })
         add(button("Ghi LOG") { runAction("Ghi LOG") { } })
         root.addView(HorizontalScrollView(this).apply { addView(bar) })
@@ -317,6 +320,8 @@ class LabActivity : Activity() {
         access = a
         library = LabLibrary(this, a, log)
         bench = Bench(this, a, log)
+        LabSession.access = a
+        LabSession.library = library
         sourceButton.text = "Nguồn: ${a.mode}"
         log.line(
             "Thư mục Music: ${a.saf.treeDocumentId} · đọc thẻ bằng ${a.describe()} · quyền truy cập mọi tệp: " +
@@ -327,6 +332,7 @@ class LabActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        log.onLine = { line -> ui.post { appendLog(line) } }
         // Quay lại từ màn hình cấp "Quyền truy cập mọi tệp" → chuyển sang File như app thật.
         val t = tree ?: return
         val a = access ?: return
@@ -407,6 +413,23 @@ class LabActivity : Activity() {
         val sample = (listOfNotNull(selected) + pool.filterIndexed { i, _ -> i % step == 0 }).distinct().take(20)
         b.resolve(sample, includeOld = !oldResolveMeasured)
         oldResolveMeasured = true
+    }
+
+    private fun openWave() {
+        val t = selected ?: run {
+            status.text = "Chọn một bài (có BPM từ XML) rồi bấm Sóng & grid."
+            return
+        }
+        startActivity(Intent(this, WaveActivity::class.java).putExtra(WaveActivity.EXTRA_PATH, t.relPath))
+    }
+
+    private fun benchGrid() {
+        val a = access ?: return
+        val lib = library ?: return
+        val gb = GridBench(this, a, lib, log)
+        val picks = gb.pick()
+        log.line("Đo lệch grid ${picks.size} bài (theo định dạng: " + picks.groupingBy { it.relPath.substringAfterLast('.').lowercase() }.eachCount() + ")")
+        gb.run(picks, progress = { i, n -> ui.post { status.text = "Đo lệch grid: bài $i/$n…" } }, cancelled = { Thread.currentThread().isInterrupted })
     }
 
     private fun benchStems() {

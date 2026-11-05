@@ -34,6 +34,17 @@ class LabLibrary(ctx: Context, val access: SdAccess, private val log: LabLog) {
     var xmlLabel: String = ""
         private set
 
+    /** id thư mục XML/ (theo nguồn đang dùng), để màn Sóng & grid đọc lại TEMPO. */
+    @Volatile var xmlDirId: String? = null
+        private set
+
+    /** Mở file rekordbox XML mới nhất trong XML/ (tên, luồng đọc). */
+    fun openNewestXml(): Pair<String, java.io.InputStream>? {
+        val dir = xmlDirId ?: source.list(access.rootId).firstOrNull { it.directory && it.name == "XML" }?.id ?: return null
+        val entry = newestXml(dir) ?: return null
+        return entry.name to access.openInputStream(entry.id)
+    }
+
     // Đệm riêng cho từng chế độ: id của FILE (đường dẫn) và SAF (documentId) khác nhau.
     private val cacheFile = File(
         ctx.filesDir,
@@ -58,6 +69,7 @@ class LabLibrary(ctx: Context, val access: SdAccess, private val log: LabLog) {
         val tRoot = ms(t0)
         val music = root.firstOrNull { it.directory && it.name == MUSIC } ?: error("Không thấy thư mục '$MUSIC' trong thư mục đã chọn")
         val xmlDir = root.firstOrNull { it.directory && it.name == "XML" }
+        xmlDirId = xmlDir?.id
 
         val t1 = System.nanoTime()
         val (dirs, stats) = ParallelWalker(source, THREADS).walk(music.id, MUSIC, music.modified)
@@ -109,6 +121,7 @@ class LabLibrary(ctx: Context, val access: SdAccess, private val log: LabLog) {
         val tCheck = ms(t1)
         val t2 = System.nanoTime()
         val xmlDirId = cached.extra["xmlDir"].orEmpty()
+        this.xmlDirId = xmlDirId.ifEmpty { null }
         val stamp = if (xmlDirId.isNotEmpty()) newestXml(xmlDirId)?.let { stampOf(it) }.orEmpty() else ""
         var snapshot = refreshed.snapshot
         var xmlState = "không đổi"

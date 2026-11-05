@@ -63,6 +63,60 @@ object RekordboxXmlLite {
         return Result(out, product)
     }
 
+    /** Mọi mốc TEMPO của một bài trong XML. */
+    data class TrackGrid(val tempos: List<com.xdj.flx10test.wave.BeatGrid.Companion.Tempo>, val averageBpm: Double, val kind: String)
+
+    /**
+     * Đọc **mọi** mốc TEMPO của các bài có khoá tên file trong [keys] (xem [matchKey]).
+     * App 0.15.0 chỉ dùng mốc đầu. Đọc kiểu stream, bỏ qua bài không cần.
+     */
+    fun grids(input: InputStream, keys: Set<String>): Map<String, TrackGrid> {
+        val parser = XmlPullParserFactory.newInstance().newPullParser()
+        parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+        parser.setInput(input, "UTF-8")
+        val out = HashMap<String, TrackGrid>()
+        var inCollection = false
+        var current: String? = null
+        var avg = 0.0
+        var kind = ""
+        val tempos = ArrayList<com.xdj.flx10test.wave.BeatGrid.Companion.Tempo>()
+        var event = parser.eventType
+        while (event != XmlPullParser.END_DOCUMENT) {
+            if (event == XmlPullParser.START_TAG) {
+                when (parser.name) {
+                    "COLLECTION" -> inCollection = true
+                    "TRACK" -> if (inCollection && parser.depth == 3) {
+                        val key = matchKey(fileNameOf(parser.attr("Location")))
+                        current = if (key in keys && key !in out) key else null
+                        avg = parser.attr("AverageBpm").toDoubleOrNull() ?: 0.0
+                        kind = parser.attr("Kind")
+                        tempos.clear()
+                    }
+                    "TEMPO" -> if (current != null) {
+                        val bpm = parser.attr("Bpm").toDoubleOrNull()
+                        val at = parser.attr("Inizio").toDoubleOrNull()
+                        val metro = parser.attr("Metro").substringBefore('/').toIntOrNull() ?: 4
+                        val battito = parser.attr("Battito").toIntOrNull() ?: 1
+                        if (bpm != null && at != null) {
+                            tempos.add(com.xdj.flx10test.wave.BeatGrid.Companion.Tempo(at, bpm, battito, metro.coerceIn(1, 16)))
+                        }
+                    }
+                }
+            } else if (event == XmlPullParser.END_TAG) {
+                when (parser.name) {
+                    "TRACK" -> if (inCollection && parser.depth == 3) {
+                        current?.let { out[it] = TrackGrid(tempos.toList(), avg, kind) }
+                        current = null
+                        if (out.size == keys.size) return out
+                    }
+                    "COLLECTION" -> inCollection = false
+                }
+            }
+            event = parser.next()
+        }
+        return out
+    }
+
     private fun XmlPullParser.attr(name: String): String = getAttributeValue(null, name) ?: ""
 
     /** rekordbox lưu Rating 0/51/102/153/204/255. */

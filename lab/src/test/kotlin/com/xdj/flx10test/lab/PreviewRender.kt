@@ -62,4 +62,41 @@ class PreviewRender {
         views.forEach { it.draw(c); c.translate(0f, it.measuredHeight.toFloat()) }
         FileOutputStream(File(out)).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
+
+    /** Ảnh xem trước sóng chi tiết + grid đậm (tín hiệu giả: kick 55 Hz, clap, hi-hat ở 126 BPM). */
+    @Test
+    fun renderWave() {
+        val out = System.getProperty("preview.wave") ?: return
+        val a = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val rate = 44100
+        val step = 60.0 / 126
+        val n = rate * 6
+        val pcm = ShortArray(n * 2)
+        val rnd = java.util.Random(7)
+        for (i in 0 until n) {
+            val t = i.toDouble() / rate
+            val k = (t - 0.2 + 100 * step) % step
+            val beat = ((t - 0.2) / step).toInt()
+            var v = 22000 * Math.exp(-k * 14) * Math.sin(2 * Math.PI * (48 + 60 * Math.exp(-k * 40)) * k)
+            if (beat % 2 == 1) v += 9000 * Math.exp(-k * 30) * (rnd.nextDouble() * 2 - 1) * (1 - Math.exp(-k * 400))
+            val h = (t - 0.2 - step / 2 + 100 * step) % step
+            v += 4500 * Math.exp(-h * 60) * (rnd.nextDouble() * 2 - 1)
+            pcm[2 * i] = v.toInt().coerceIn(-32767, 32767).toShort(); pcm[2 * i + 1] = pcm[2 * i]
+        }
+        val b = com.xdj.flx10test.wave.DetailWaveBuilder(rate)
+        b.feed(pcm, pcm.size, 2)
+        val view = com.xdj.flx10test.wave.DetailWaveView(a).apply {
+            wave = b.build()
+            grid = com.xdj.flx10test.wave.BeatGrid.constant(126.0, 0.2, 6.0)
+            compareGrid = com.xdj.flx10test.wave.BeatGrid.constant(126.0, 0.214, 6.0)
+            secondsVisible = System.getProperty("preview.seconds")?.toDoubleOrNull() ?: 1.2
+            positionSec = 0.2 + 5 * step
+            label = "DECK 1 · sóng chi tiết · %.2fs zoom".format(secondsVisible)
+        }
+        view.measure(View.MeasureSpec.makeMeasureSpec(2000, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(560, View.MeasureSpec.EXACTLY))
+        view.layout(0, 0, 2000, 560)
+        val bmp = Bitmap.createBitmap(2000, 560, Bitmap.Config.ARGB_8888)
+        view.draw(Canvas(bmp))
+        FileOutputStream(File(out)).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
 }

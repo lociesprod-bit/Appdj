@@ -202,6 +202,69 @@ Ngày 05/11/2026 (cập nhật sau LOG Lab trên tablet). Viết trên cloud vì
 - Code khác còn cập nhật chữ/màu của `prepareTab`, `controlsToggle`, `displayTab` thì giữ các field đó (không gắn vào layout) hoặc gọi `section.refresh()`.
 - MIDI/phím tắt không đổi.
 
+### 3.9 Sóng chi tiết, grid đậm, grid chuẩn rekordbox, SYNC bấm đôi (yêu cầu 05/11 18:42)
+
+Bạn gửi ảnh màn EXPORT / PREPARE (zoom 0,27 s) và ảnh rekordbox. Có 4 việc:
+
+1. **Sóng trông "giả", khó đặt grid.**
+   - **Nguyên nhân:** `ScrollWaveView.drawWave` chỉ có ~300 cột/giây (`columnsPerPixel = framesPerPixel * 300 / rate`, tile 512 cột, `WaveEnvelope.peaks`). Ở 0,27 s trên 2000 px còn ~80 cột bị kéo giãn bằng `canvas.scale`, nên thành mảng màu mượt.
+   - **Sửa:** chép `shared/.../wave/DetailWave.kt` + `DetailWaveView.kt`.
+   - **Dữ liệu:** `DetailWaveBuilder(rate, 16, frames)` nhận PCM ngay trong **lượt giải mã tuần tự** của `ProgressiveTrackLoader` (chỗ có `short[] stereo` trước khi gọi `Engine.deckStreamWrite/deckStreamAppend/deckAppendOwned`): `builder.feed(stereo, frames * 2, 2)`. Không nạp phần cửa sổ CUE ghi trước, vì builder cần thứ tự liên tục. Xong thì giữ `builder.build()` theo deck.
+     - Mỗi khối 16 frame lưu min/max có dấu + bass/mid/treble.
+     - Bộ nhớ ~4 MB cho bài 5 phút.
+     - CPU khoảng 0,3–0,5 s mỗi bài, chạy trong luồng nền.
+   - **Vẽ:** trong `ScrollWaveView.drawWave`, khi `columnsPerPixel < 1` (tức hiển thị < ~6,7 s trên 2000 px) và vùng nhìn thấy đã giải mã xong, vẽ bằng thuật toán `DetailWaveView.drawWave`: mỗi pixel gom min/max các khối; zoom sâu hơn 1 khối/pixel thì nội suy. Ngược lại giữ tile cũ.
+   - **Màu:** cùng công thức `RgbWaveData.color` (đỏ = bass, xanh lá = mid, xanh dương = treble). Kick đỏ, clap hồng, hi-hat xanh như rekordbox RGB.
+   - **Nét:** dày tối thiểu 2,5 dp; đoạn gần im lặng tô xám.
+   - **Ảnh xem trước** (render bằng chính `DetailWaveView`): `handoff/wave-preview-0.27s.png`, `handoff/wave-preview-1.2s.png`.
+   - **Thử trên tablet:** Lab3, nút "Sóng & grid".
+
+2. **Vạch grid mờ.**
+   - **0.15.0** (`ScrollWaveView`): `gridOverlay` alpha 55/255 nét 2 px; `barOverlay` alpha 95 nét 3 px; tick ngắn `grid`/`bar` ở mép. Trên mật độ ~2 chỉ ~1 dp.
+   - **Sửa theo `GridStyle`** (trong `DetailWaveView.kt`):
+     - beat: trắng alpha 225, **1,6 dp**;
+     - ô nhịp: đỏ (255, 64, 64) đặc, **2,8 dp**;
+     - mỗi vạch có viền đen alpha 150 rộng thêm 2 dp;
+     - tam giác vàng 8 dp trên/dưới mỗi ô nhịp;
+     - số ô nhịp khi các ô nhịp cách nhau ≥ 56 dp; số beat 1–4 khi các beat cách nhau ≥ 34 dp.
+   - **Vạch phát:** đổi sang **trắng có mũi tên đỏ**, để không lẫn với vạch ô nhịp đỏ khi căn.
+
+3. **Grid từ rekordbox lệch.**
+   - **Nguyên nhân 1 (chắc chắn): chỉ dùng mốc đầu.**
+     - `RekordboxXml`: chỉ đọc **TEMPO đầu** (BPM 2 số lẻ + Inizio); các mốc sau chỉ dùng để đếm "tempo thay đổi".
+     - `RekordboxAnalysis` (PQTZ): chỉ lấy **beat đầu + tempo/100**; lệch > 3 ms thì đánh dấu `variableGrid` và vẫn dùng đoạn đầu.
+     - BPM thật kiểu 125,996 bị làm tròn thành 126,00, nên cuối bài 5 phút lệch ~10–12 ms. Test `fitRecoversPreciseBpmFromPqtzBeats` dựng đúng tình huống này.
+   - **Sửa nguyên nhân 1:**
+     - chép `wave/BeatGrid.kt`;
+     - `RekordboxXml`: gom **mọi** `TEMPO` của bài thành `List<BeatGrid.Companion.Tempo>` rồi gọi `BeatGrid.fromTempos(tempos, duration)`;
+     - PQTZ: gom **mọi** beat (ms, beat 1–4) rồi gọi `BeatGrid.fromBeats(ms, beatInBar)`;
+     - engine native hiện chỉ có `setGrid(deck, gen, bpm, beat0)`: tạm dùng `grid.fitConstant()`. Đây là BPM khớp mọi beat theo bình phương tối thiểu (ví dụ 125,996), nên hết trôi với grid cố định. Bài đổi tempo thật (`maxErrorMs` > ~5) cần API native mới, ví dụ `setGridBeats(deck, gen, double[] beatFrames)`, để quantize/beat jump/loop/SYNC theo đúng từng beat. Phần vẽ grid dùng `BeatGrid.linesIn` cho mọi trường hợp.
+   - **Nguyên nhân 2 (cần số đo): lệch cố định theo định dạng.**
+     - Bộ giải mã MP3 của Android (`c2.android.mp3.decoder`) và của rekordbox xử lý encoder delay (LAME, thường 576 mẫu) / decoder delay (529 mẫu) khác nhau, có thể lệch tới ~25 ms. LOG 0.15.0 đã gợi ý: stems MP3 lệch bài gốc đúng **529–530 frame**.
+     - **Lab3 "Đo lệch grid"** giải mã ~20 bài đủ các định dạng, so grid XML với kick (`GridOffsetEstimator`), rồi in lệch trung vị từng định dạng (MP3/WAV/M4A/FLAC) và độ trôi. Chênh lệch giữa các định dạng là phần cần bù.
+     - Sau khi có LOG: thêm `gridOffsetSec(format, mp3Info)` khi dựng grid (`grid.shifted(offset)`), dựa trên `Mp3Gapless.parse` (LAME delay/padding) và khoá `encoder-delay` của MediaExtractor.
+
+4. **SYNC bấm đôi.**
+   - **0.15.0:** `DjController.syncPress(d)` bật/tắt khoá `synced[d]` + `Engine.syncTo(d, m, true)`. Khi khoá, `tempoSlider()` bị bỏ qua. Khi tắt, gọi `tempoSlider(d, slider[d])` nên **tempo nhảy về vị trí thanh trượt**.
+   - **Sửa** (chép `sync/BeatSync.kt`):
+     ```kotlin
+     private val taps = Array(4) { SyncTapDetector(400) }
+     fun syncPress(d: Int) = when (taps[d].press(SystemClock.uptimeMillis(), synced[d])) {
+         LOCK -> /* như cũ */
+         UNLOCK_KEEP_TEMPO -> { synced[d] = false; keepCurrentTempo(d) }   // không gọi tempoSlider(d, slider[d])
+         INSTANT_MATCH -> { synced[d] = false; instantMatch(d) }           // khớp một lần, rồi để mở
+     }
+     ```
+     - **`instantMatch(d)`:**
+       1. Chụp `DeckSnapshot(position, tempoRatio, grid)` của MASTER và deck d.
+       2. `BeatSync.instantMatch(master, slave)` cho tỉ lệ tempo + vị trí mới (cùng pha beat; `alignBars = true` nếu muốn cả ô nhịp; có ×2/÷2).
+       3. Đặt tempo như `DjController.timing()` (`Engine.setTiming` hoặc `setDeck(d, 5, …)`), rồi `TempoSlider.positionFor(ratio, tempoRange[d])` để dời thanh trên màn hình và đổi dải nếu cần.
+       4. Nhảy tới vị trí mới: `Engine.seek(d, seekToSec * rate / length)`. Nếu muốn mượt hơn khi đang phát, có thể nudge tempo vài trăm ms thay vì nhảy.
+     - **`keepCurrentTempo(d)`:** đọc tempo đang chạy, dời thanh tới `TempoSlider.positionFor(...)`.
+     - **Thanh tempo phần cứng FLX10:** `TempoPickup.arm(slider)` sau `instantMatch`/`keepCurrentTempo`. Trong xử lý MIDI tempo fader, chỉ gọi `tempoSlider()` khi `pickup.onFader(v)` trả true (soft takeover, tempo không nhảy khi vừa chạm thanh).
+     - **RESET:** giữ như cũ (`tempoReset`), là cách duy nhất về tempo gốc.
+   - **Test:** `SyncTapDetectorTest`, `BeatSyncTest` (khớp pha beat/ô nhịp, ×2/÷2, vị trí thanh, pickup).
+
 ## 4. Các file trong repo
 
 ```
@@ -219,8 +282,13 @@ shared/src/main/kotlin/com/xdj/flx10test/
   browse/TrackRowView.kt      TrackRowView, BrowserHeaderView, BrowserStyle (màu xanh key)
   browse/BrowserPrefs.kt      lưu cột + sắp xếp
   ui/SettingsToggleSection.kt mục "Chế độ & bố cục" trong ⚙
+  wave/BeatGrid.kt            grid theo từng beat (mọi TEMPO XML / mọi beat PQTZ), fitConstant cho native, shifted
+  wave/DetailWave.kt          dữ liệu sóng chi tiết 16 frame/khối (min/max có dấu + bass/mid/treble), builder nạp dần
+  wave/DetailWaveView.kt      vẽ sóng thật khi zoom sâu + GridStyle đậm + vạch phát trắng; so sánh grid cũ
+  wave/GridOffsetEstimator.kt đo lệch grid so với kick (lệch cố định, độ trôi); Mp3Gapless đọc LAME delay/padding
+  sync/BeatSync.kt            SyncTapDetector (bấm đôi), BeatSync.instantMatch, TempoSlider, TempoPickup
 lab/                          FLX10 Lab (applicationId com.xdj.flx10test.lab)
-handoff/                      file này + browse-preview.png
+handoff/                      file này + browse-preview.png + wave-preview-*.png
 ```
 
 - Package con (`.sd`, `.browse`, `.ui`) không trùng tên lớp nào của 0.15.0.
@@ -229,7 +297,7 @@ handoff/                      file này + browse-preview.png
 
 ## 5. Test đã chạy (cloud, Linux)
 
-- **`./gradlew :shared:testDebugUnitTest :lab:testDebugUnitTest`:** 57 + 8 test **PASS**, gồm cả Robolectric SDK 34. Các nhóm:
+- **`./gradlew :shared:testDebugUnitTest :lab:testDebugUnitTest`:** 77 + 10 test **PASS**, gồm cả Robolectric SDK 34. Các nhóm:
   - `CamelotKey`/`KeyMatch`: parse mọi dạng key, vòng 12↔1, A↔B, transpose, tempo → nửa cung;
   - `MyTags`: tag tiếng Việt, khối nằm giữa comment, trùng tag;
   - `SafDocId`: tên có dấu cách, `#`, `%`, NFD;
@@ -239,10 +307,15 @@ handoff/                      file này + browse-preview.png
   - `StemDecodeScheduler`: chỉ 1/2/4 luồng, không bao giờ 3;
   - `BrowserColumns`: sắp xếp, định dạng, chia cột, cột mặc định mới;
   - Views: `TrackRowView`, `BrowserHeaderView`, `SettingsToggleSection`, `BrowserPrefs`, cắt chữ "…";
-  - Lab: đọc rekordbox XML, tách `.serato-stems`, khởi động Activity.
+  - `BeatGrid`: mọi mốc TEMPO, Battito, đổi tempo, PQTZ 125,996 BPM so với 126,00, bù lệch;
+  - `GridOffsetEstimator`: bài giả kick 55 Hz, cài lệch 12 ms thì đo ra 12,0 ms (IQR 0,6); phát hiện trôi khi BPM làm tròn;
+  - `Mp3Gapless`: LAME delay/padding, bỏ qua ID3;
+  - `DetailWaveBuilder`/`DetailWaveView`: giữ hình sóng có dấu, màu theo dải, vẽ ở zoom 0,27 s và 4 s;
+  - SYNC: bấm đôi, khớp pha beat/ô nhịp, ×2/÷2, vị trí thanh, soft takeover;
+  - Lab: đọc rekordbox XML (kể cả nhiều mốc TEMPO), tách `.serato-stems`, khởi động Activity.
 - **Lưu ý:** test chạy với `LC_ALL=C.UTF-8` (đã đặt trong `build.gradle.kts`). Locale POSIX làm JVM đổi tên file tiếng Việt thành "?".
 - **`:shared:lintDebug`, `:lab:lintRelease`:** 0 lỗi, 0 cảnh báo.
-- **APK Lab:** `apksigner` đạt (v2), `aapt2` (`com.xdj.flx10test.lab` 2/0.15.1-lab2, target 34), `zipalign -c -p 4` đạt.
+- **APK Lab:** `apksigner` đạt (v2), `aapt2` (`com.xdj.flx10test.lab` 3/0.15.1-lab3, target 34), `zipalign -c -p 4` đạt.
 - **Chưa làm được ở cloud:**
   - test native ASan/UBSan/TSan;
   - Robolectric SDK 29;
@@ -250,10 +323,10 @@ handoff/                      file này + browse-preview.png
 
 ## 6. FLX10 Lab: thử trên tablet trước khi ghép
 
-- **Cài đặt:** cài `FLX10-Lab-0.15.1-lab2.apk`. Lab có tên gói riêng nên **không đụng FLX10 DJ**. lab2 ký cùng key tạm với lab1 nên cài đè được.
+- **Cài đặt:** cài `FLX10-Lab-0.15.1-lab3.apk`. Lab có tên gói riêng nên **không đụng FLX10 DJ**. Các bản Lab ký cùng key tạm nên cài đè được.
 - **Key ký:** key tạm (`CN=FLX10 Lab (key tam thoi)`, SHA-256 `e2d1bac1…d697cf34`) chỉ có trên máy cloud, không commit vì repo public. Build lại Lab trên Mac thì ký bằng key khác, nên cần gỡ Lab cũ trước khi cài.
 
-**Các bước (lab2):**
+**Các bước (từ lab2):**
 1. Mở Lab → **Chọn thư mục Music** (cùng thư mục như FLX10 DJ).
 2. **Nguồn: SAF/FILE:** bấm để chuyển. Chuyển sang FILE thì Lab mở màn hình cấp "Quyền truy cập mọi tệp"; cấp xong quay lại là Lab tự chuyển. Mỗi nguồn có đệm riêng.
 3. **↻ Quét:** đo quét đầy đủ bằng nguồn đang chọn.
@@ -267,6 +340,14 @@ handoff/                      file này + browse-preview.png
    - **⚙ Cột** bật/tắt cột;
    - bấm tiêu đề cột để sắp xếp.
 9. LOG nằm ở `Music/LOG/LAB_<thời gian>.log`, mỗi lần mở Lab một file. Gửi file mới nhất (đính kèm vào chat là được, không cần Mac).
+
+**Lab3: Sóng & grid**
+- Chọn một bài có BPM (từ XML) → **Sóng & grid**:
+  - sóng chi tiết thật + grid đậm từ mọi mốc TEMPO, so với grid cũ 0.15.0 (vạch xanh ngọc mảnh);
+  - **◀ Beat / Beat ▶**, **± Zoom**, **0,27 s**, **Đầu bài / Giữa / Cuối**;
+  - **Bù ±1/±10 ms** để thử dời grid; **Bù theo đo** dùng số đo tự động;
+  - kéo ngang để tua, chụm hai ngón để zoom.
+- **Đo lệch grid** (màn chính): ~20 bài nhiều định dạng → LOG từng bài và tổng kết theo định dạng.
 
 **Đọc LOG Lab:**
 - **"Liệt kê All Music DJ bằng FILE/SAF: … ms":** so với 28–44 s của 0.15.0.
