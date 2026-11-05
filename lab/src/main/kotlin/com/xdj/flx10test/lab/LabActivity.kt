@@ -40,8 +40,7 @@ import com.xdj.flx10test.browse.KeyMatch
 import com.xdj.flx10test.browse.MasterKey
 import com.xdj.flx10test.browse.SortState
 import com.xdj.flx10test.browse.TrackRowView
-import com.xdj.flx10test.sd.SafDocId
-import com.xdj.flx10test.sd.SafFastList
+import com.xdj.flx10test.sd.SdAccess
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
 
@@ -57,7 +56,9 @@ class LabActivity : Activity() {
     private lateinit var browserPrefs: BrowserPrefs
     private lateinit var log: LabLog
 
-    private var list: SafFastList? = null
+    private var access: SdAccess? = null
+    private var tree: Uri? = null
+    private var oldResolveMeasured = false
     private var library: LabLibrary? = null
     private var bench: Bench? = null
 
@@ -84,6 +85,7 @@ class LabActivity : Activity() {
     private lateinit var logView: TextView
     private lateinit var logScroll: ScrollView
     private lateinit var masterButton: TextView
+    private lateinit var sourceButton: TextView
     private lateinit var filterButton: TextView
     private val actionButtons = ArrayList<TextView>()
     private val logLines = ArrayDeque<String>()
@@ -152,6 +154,8 @@ class LabActivity : Activity() {
         add(button("Chọn thư mục Music") { pickTree() })
         add(button("↻ Quét") { runAction("Quét thẻ") { fullScan() } })
         add(button("Mở lại (đệm)") { runAction("Mở lại có đệm") { openCached() } })
+        sourceButton = button("Nguồn: —") { toggleSource() }
+        add(sourceButton)
         add(button("⚙ Cột") { showColumnsDialog() }, action = false)
         masterButton = button("MASTER: —") { showMasterDialog() }
         add(masterButton, action = false)
@@ -249,7 +253,7 @@ class LabActivity : Activity() {
     /** Chạy một thao tác trên luồng nền; ghi LOG ra thẻ khi xong. */
     private fun runAction(label: String, block: () -> Unit) {
         if (busy) return
-        if (list == null && label != "Ghi LOG") {
+        if (access == null && label != "Ghi LOG") {
             status.text = "Chưa chọn thư mục Music."
             return
         }
@@ -263,7 +267,7 @@ class LabActivity : Activity() {
             } catch (e: Exception) {
                 log.line("⚠ $label: ${e.message ?: e.javaClass.simpleName}")
             }
-            val err = log.flush(contentResolver, list)
+            val err = log.flush(contentResolver, access?.saf)
             val ms = (System.nanoTime() - t0) / 1_000_000
             ui.post {
                 setBusy(false)
@@ -308,11 +312,62 @@ class LabActivity : Activity() {
     }
 
     private fun attach(tree: Uri) {
-        val l = SafFastList(contentResolver, tree)
-        list = l
-        library = LabLibrary(this, l, log)
-        bench = Bench(this, l, log)
-        log.line("Thư mục Music: ${l.treeDocumentId} · provider ${tree.authority} · documentId dạng đường dẫn: ${if (l.pathShaped) "có" else "không"}")
+        this.tree = tree
+        val a = SdAccess.choose(contentResolver, tree, preferSaf = prefs.getBoolean(KEY_FORCE_SAF, false))
+        access = a
+        library = LabLibrary(this, a, log)
+        bench = Bench(this, a, log)
+        sourceButton.text = "Nguồn: ${a.mode}"
+        log.line(
+            "Thư mục Music: ${a.saf.treeDocumentId} · đọc thẻ bằng ${a.describe()} · quyền truy cập mọi tệp: " +
+                (if (SdAccess.hasAllFilesAccess()) "có" else "chưa") +
+                (if (prefs.getBoolean(KEY_FORCE_SAF, false)) " · đang ép SAF" else ""),
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Quay lại từ màn hình cấp "Quyền truy cập mọi tệp" → chuyển sang File như app thật.
+        val t = tree ?: return
+        val a = access ?: return
+        if (!busy && a.mode == SdAccess.Mode.SAF && !prefs.getBoolean(KEY_FORCE_SAF, false) && SdAccess.hasAllFilesAccess()) {
+            attach(t)
+            if (access?.mode == SdAccess.Mode.FILE) runAction("Mở thư viện (File)") { if (!openCached()) fullScan() }
+        }
+    }
+
+    private fun toggleSource() {
+        val t = tree ?: run {
+            status.text = "Chưa chọn thư mục Music."
+            return
+        }
+        val a = access ?: return
+        if (a.mode == SdAccess.Mode.SAF && !SdAccess.hasAllFilesAccess()) {
+            askAllFilesAccess("Đọc thẻ bằng File")
+            return
+        }
+        prefs.edit().putBoolean(KEY_FORCE_SAF, a.mode == SdAccess.Mode.FILE).apply()
+        attach(t)
+        runAction("Mở thư viện (${access?.mode})") { if (!openCached()) fullScan() }
+    }
+
+    private fun askAllFilesAccess(title: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            status.text = "Đọc thẻ bằng File cần Android 11 trở lên."
+            return
+        }
+        prefs.edit().putBoolean(KEY_FORCE_SAF, false).apply()
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(
+                "Cần bật \"Quyền truy cập mọi tệp\" cho FLX10 Lab (chỉ để đọc thẻ nhanh hơn, giống FLX10 DJ 0.15.1). " +
+                    "Bật xong quay lại, Lab tự chuyển sang File.",
+            )
+            .setPositiveButton("Mở cài đặt") { _, _ ->
+                startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+            }
+            .setNegativeButton("Đóng", null)
+            .show()
     }
 
     // ---------------------------------------------------------------- Thao tác
@@ -350,7 +405,8 @@ class LabActivity : Activity() {
         }
         val step = (pool.size / 20).coerceAtLeast(1)
         val sample = (listOfNotNull(selected) + pool.filterIndexed { i, _ -> i % step == 0 }).distinct().take(20)
-        b.resolve(sample)
+        b.resolve(sample, includeOld = !oldResolveMeasured)
+        oldResolveMeasured = true
     }
 
     private fun benchStems() {
@@ -369,30 +425,11 @@ class LabActivity : Activity() {
             status.text = "Chưa chọn thư mục Music."
             return
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            status.text = "SAF vs File cần Android 11 trở lên."
+        if (!SdAccess.hasAllFilesAccess()) {
+            askAllFilesAccess("SAF vs File")
             return
         }
-        if (!b.hasAllFilesAccess()) {
-            AlertDialog.Builder(this)
-                .setTitle("SAF vs File")
-                .setMessage(
-                    "Để so tốc độ, Lab cần \"Quyền truy cập mọi tệp\" (chỉ dùng để đọc thẻ, không ghi). " +
-                        "Bật cho FLX10 Lab rồi quay lại bấm SAF vs File.",
-                )
-                .setPositiveButton("Mở cài đặt") { _, _ ->
-                    startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
-                }
-                .setNegativeButton("Đóng", null)
-                .show()
-            return
-        }
-        runAction("SAF vs File") {
-            val l = list ?: return@runAction
-            val music = (if (l.pathShaped) SafDocId.child(l.treeDocumentId, LabLibrary.MUSIC) else null)
-                ?: l.list(l.treeDocumentId).first { it.directory && it.name == LabLibrary.MUSIC }.id
-            b.safVsFile(music)
-        }
+        runAction("SAF vs File") { b.safVsFile() }
     }
 
     // ---------------------------------------------------------------- Danh sách
@@ -537,5 +574,6 @@ class LabActivity : Activity() {
     companion object {
         private const val REQ_TREE = 41
         private const val KEY_TREE = "tree"
+        private const val KEY_FORCE_SAF = "forceSaf"
     }
 }

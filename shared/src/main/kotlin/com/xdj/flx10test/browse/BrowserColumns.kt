@@ -75,17 +75,18 @@ enum class ColumnId(
     val defaultOn: Boolean,
 ) {
     TITLE("title", "Track Title", 3.2f, 150, Align.START, true),
-    ARTIST("artist", "Artist", 1.7f, 90, Align.START, true),
+    ARTIST("artist", "Artist", 1.7f, 90, Align.START, false),
     BPM("bpm", "BPM", 0f, 66, Align.END, true),
     KEY("key", "Key", 0f, 50, Align.CENTER, true),
     MYTAG("mytag", "MyTag", 1.6f, 90, Align.START, true),
     TIME("time", "Time", 0f, 56, Align.END, true),
-    RATING("rating", "Rating", 0f, 76, Align.START, false),
+    RATING("rating", "Rating", 0f, 100, Align.START, true),
     GENRE("genre", "Genre", 1.0f, 80, Align.START, false),
     COMMENT("comment", "Comment", 1.4f, 90, Align.START, false),
     STEMS("stems", "Stems", 0f, 62, Align.CENTER, true);
 
     companion object {
+        /** Mặc định theo lựa chọn của bạn trong Lab: Track Title | BPM | Key | MyTag | Time | Rating | Stems. */
         val DEFAULT: List<ColumnId> = entries.filter { it.defaultOn }
         fun byKey(key: String): ColumnId? = entries.firstOrNull { it.key == key }
     }

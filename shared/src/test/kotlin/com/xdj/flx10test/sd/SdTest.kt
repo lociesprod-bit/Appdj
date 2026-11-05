@@ -259,27 +259,36 @@ class SdScanCacheTest {
 
 class StemDecodeSchedulerTest {
     @Test
-    fun idleDeviceUsesFreeCodecs() {
-        val p = StemDecodeScheduler.plan(stems = 4, codecLimit = 3, codecsInUse = 0, cueReserve = 1, anyDeckPlaying = false, cpuCores = 8)
-        assertEquals(2, p.parallel)
+    fun idleUsesAllFourStems() {
+        val p = StemDecodeScheduler.plan(stems = 4, anyDeckPlaying = false, cpuCores = 8)
+        assertEquals(4, p.parallel)
         assertEquals(0L, p.pauseMs)
         assertTrue(p.startAfterReady)
     }
 
     @Test
     fun playingCapsAtTwoAndPauses() {
-        val p = StemDecodeScheduler.plan(4, codecLimit = 6, codecsInUse = 0, cueReserve = 1, anyDeckPlaying = true, cpuCores = 8)
+        val p = StemDecodeScheduler.plan(4, anyDeckPlaying = true, cpuCores = 8)
         assertEquals(2, p.parallel)
         assertEquals(2L, p.pauseMs)
-        val idle = StemDecodeScheduler.plan(4, codecLimit = 6, codecsInUse = 0, cueReserve = 1, anyDeckPlaying = false, cpuCores = 8)
-        assertEquals(3, idle.parallel)
     }
 
     @Test
-    fun alwaysAtLeastOneAndNeverMoreThanStems() {
-        assertEquals(1, StemDecodeScheduler.plan(4, 3, 3, 1, false, 8).parallel)
-        assertEquals(1, StemDecodeScheduler.plan(4, 8, 0, 0, false, 2).parallel)
-        assertEquals(1, StemDecodeScheduler.plan(1, 8, 0, 0, false, 8).parallel)
-        assertEquals(0, StemDecodeScheduler.plan(0, 8, 0, 0, false, 8).parallel)
+    fun neverThreeForFourStems() {
+        // 5 nhân → còn 3 cho stems → phải hạ xuống 2 (3 luồng = 2 đợt, LOG Lab: chậm hơn 2 luồng).
+        assertEquals(2, StemDecodeScheduler.plan(4, false, cpuCores = 5).parallel)
+        for (cores in 1..16) for (playing in listOf(true, false)) {
+            assertTrue(StemDecodeScheduler.plan(4, playing, cores).parallel in setOf(1, 2, 4))
+        }
+    }
+
+    @Test
+    fun smallDevicesAndEdgeCases() {
+        assertEquals(1, StemDecodeScheduler.plan(4, false, cpuCores = 2).parallel)
+        assertEquals(1, StemDecodeScheduler.plan(1, false, 8).parallel)
+        assertEquals(0, StemDecodeScheduler.plan(0, false, 8).parallel)
+        assertEquals(3, StemDecodeScheduler.evenSplit(3, 4))
+        assertEquals(2, StemDecodeScheduler.evenSplit(4, 3))
+        assertEquals(1, StemDecodeScheduler.evenSplit(5, 4))
     }
 }

@@ -5,7 +5,7 @@ import com.xdj.flx10test.browse.BrowserRow
 import com.xdj.flx10test.sd.CachedDir
 import com.xdj.flx10test.sd.CachedFile
 import com.xdj.flx10test.sd.ParallelWalker
-import com.xdj.flx10test.sd.SafFastList
+import com.xdj.flx10test.sd.SdAccess
 import com.xdj.flx10test.sd.ScanSnapshot
 import com.xdj.flx10test.sd.SdScanCache
 import java.io.File
@@ -25,32 +25,44 @@ class LabTrack(
  * Thư viện thẻ SD của Lab: quét `All Music DJ/`, ghép rekordbox XML trong `XML/`, lưu đệm bằng [SdScanCache].
  * Mọi bước đều ghi thời gian vào LOG.
  */
-class LabLibrary(ctx: Context, val list: SafFastList, private val log: LabLog) {
+class LabLibrary(ctx: Context, val access: SdAccess, private val log: LabLog) {
+    private val source get() = access.source
+    private val saf get() = access.saf
     @Volatile var tracks: List<LabTrack> = emptyList()
         private set
 
     var xmlLabel: String = ""
         private set
 
-    private val cacheFile = File(ctx.filesDir, "sd-cache/" + Integer.toHexString(list.treeUri.toString().hashCode()) + ".bin")
+    // Đệm riêng cho từng chế độ: id của FILE (đường dẫn) và SAF (documentId) khác nhau.
+    private val cacheFile = File(
+        ctx.filesDir,
+        "sd-cache/" + Integer.toHexString(saf.treeUri.toString().hashCode()) + "-" + access.mode.name.lowercase() + ".bin",
+    )
+
+    private fun diag() = if (access.mode == SdAccess.Mode.SAF) " · " + saf.diagnostics() else ""
+
+    private fun resetCounters() {
+        saf.queries.set(0)
+        saf.queryNanos.set(0)
+    }
 
     data class Summary(val tracks: Int, val withStems: Int, val xmlMatched: Int, val xmlTracks: Int, val millis: Long)
 
     /** Quét đầy đủ (giống "↻ Quét"). */
     fun scan(): Summary {
         val t0 = System.nanoTime()
-        list.queries.set(0)
-        list.queryNanos.set(0)
-        val rootId = list.treeDocumentId
-        val root = list.list(rootId)
+        resetCounters()
+        val rootId = access.rootId
+        val root = source.list(rootId)
         val tRoot = ms(t0)
         val music = root.firstOrNull { it.directory && it.name == MUSIC } ?: error("Không thấy thư mục '$MUSIC' trong thư mục đã chọn")
         val xmlDir = root.firstOrNull { it.directory && it.name == "XML" }
 
         val t1 = System.nanoTime()
-        val (dirs, stats) = ParallelWalker(list, THREADS).walk(music.id, MUSIC, music.modified)
+        val (dirs, stats) = ParallelWalker(source, THREADS).walk(music.id, MUSIC, music.modified)
         val tWalk = ms(t1)
-        log.line("Liệt kê $MUSIC: ${stats.dirs} thư mục · ${stats.entries} mục · $tWalk ms (${THREADS} luồng) · ${list.diagnostics()}")
+        log.line("Liệt kê $MUSIC bằng ${access.mode}: ${stats.dirs} thư mục · ${stats.entries} mục · $tWalk ms ($THREADS luồng)${diag()}")
 
         val t2 = System.nanoTime()
         val xml = readXml(xmlDir?.id)
@@ -73,7 +85,7 @@ class LabLibrary(ctx: Context, val list: SafFastList, private val log: LabLog) {
         val tSave = ms(t4)
         val total = ms(t0)
         log.line(
-            "Quét thẻ: ${built.tracks} bài · ${built.withStems} có stems · XML khớp ${built.xmlMatched}/${built.xmlTracks} · " +
+            "Quét thẻ (${access.mode}): ${built.tracks} bài · ${built.withStems} có stems · XML khớp ${built.xmlMatched}/${built.xmlTracks} · " +
                 "tổng $total ms (gốc $tRoot · liệt kê $tWalk · XML $tXml · ghép $tBuild · lưu đệm $tSave)",
         )
         return built.copy(millis = total)
@@ -85,16 +97,15 @@ class LabLibrary(ctx: Context, val list: SafFastList, private val log: LabLog) {
      */
     fun openCached(onReady: (Summary) -> Unit): Summary? {
         val t0 = System.nanoTime()
-        list.queries.set(0)
-        list.queryNanos.set(0)
-        val cached = SdScanCache.load(cacheFile, list.treeDocumentId) ?: return null
+        resetCounters()
+        val cached = SdScanCache.load(cacheFile, access.rootId) ?: return null
         val tLoad = ms(t0)
         val ready = build(cached)
         val tReady = ms(t0)
         onReady(ready.copy(millis = tReady))
 
         val t1 = System.nanoTime()
-        val refreshed = SdScanCache.refresh(cached, list, THREADS)
+        val refreshed = SdScanCache.refresh(cached, source, THREADS)
         val tCheck = ms(t1)
         val t2 = System.nanoTime()
         val xmlDirId = cached.extra["xmlDir"].orEmpty()
@@ -120,9 +131,9 @@ class LabLibrary(ctx: Context, val list: SafFastList, private val log: LabLog) {
         }
         val total = ms(t0)
         log.line(
-            "Mở lại có đệm: đọc đệm $tLoad ms · danh sách sẵn sàng sau $tReady ms (${ready.tracks} bài) · " +
+            "Mở lại có đệm (${access.mode}): đọc đệm $tLoad ms · danh sách sẵn sàng sau $tReady ms (${ready.tracks} bài) · " +
                 "kiểm tra ${refreshed.checked} thư mục $tCheck ms (liệt kê lại ${refreshed.relisted}, mới ${refreshed.added}, mất ${refreshed.removed}) · " +
-                "XML $xmlState $tXml ms · tổng $total ms · ${list.diagnostics()}",
+                "XML $xmlState $tXml ms · tổng $total ms${diag()}",
         )
         return result.copy(millis = total)
     }
@@ -130,7 +141,7 @@ class LabLibrary(ctx: Context, val list: SafFastList, private val log: LabLog) {
     private class Xml(val tracks: List<RekordboxXmlLite.Track>, val stamp: String, val label: String)
 
     private fun newestXml(xmlDirId: String) =
-        list.list(xmlDirId).filter { !it.directory && !it.name.startsWith(".") && it.name.endsWith(".xml", true) }.maxByOrNull { it.modified }
+        source.list(xmlDirId).filter { !it.directory && !it.name.startsWith(".") && it.name.endsWith(".xml", true) }.maxByOrNull { it.modified }
 
     private fun stampOf(e: com.xdj.flx10test.sd.DirEntry) = "${e.id}\t${e.size}\t${e.modified}"
 
@@ -145,9 +156,7 @@ class LabLibrary(ctx: Context, val list: SafFastList, private val log: LabLog) {
             log.line("XML: thư mục XML/ trống")
             return null
         }
-        val resolver = list.resolver
-        val parsed = resolver.openInputStream(list.documentUri(entry.id))?.use { RekordboxXmlLite.parse(it) }
-            ?: error("Không mở được ${entry.name}")
+        val parsed = access.openInputStream(entry.id).use { RekordboxXmlLite.parse(it) }
         val label = "${entry.name} (${parsed.product}, ${parsed.tracks.size} bài)"
         log.line("XML: $label · ${entry.size / 1024} KB · đọc ${ms(t0)} ms")
         return Xml(parsed.tracks, stampOf(entry), label)

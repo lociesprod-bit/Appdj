@@ -31,3 +31,9 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
 }
+
+// Tên file tiếng Việt: JVM test phải dùng UTF-8 cho tên file (container Linux mặc định là POSIX/ASCII).
+tasks.withType<Test>().configureEach {
+    environment("LC_ALL", "C.UTF-8")
+    environment("LANG", "C.UTF-8")
+}

@@ -20,8 +20,8 @@ android {
         applicationId = "com.xdj.flx10test.lab"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.15.1-lab1"
+        versionCode = 2
+        versionName = "0.15.1-lab2"
     }
 
     signingConfigs {
@@ -66,4 +66,6 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     System.getProperty("preview.out")?.let { systemProperty("preview.out", it) }
+    environment("LC_ALL", "C.UTF-8")
+    environment("LANG", "C.UTF-8")
 }

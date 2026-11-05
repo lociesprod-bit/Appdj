@@ -126,8 +126,16 @@ class BrowserColumnsTest {
     }
 
     @Test
+    fun defaultColumnsMatchLabChoice() {
+        assertEquals(
+            listOf(ColumnId.TITLE, ColumnId.BPM, ColumnId.KEY, ColumnId.MYTAG, ColumnId.TIME, ColumnId.RATING, ColumnId.STEMS),
+            ColumnId.DEFAULT,
+        )
+    }
+
+    @Test
     fun layoutFillsWidth() {
-        val cols = ColumnId.DEFAULT
+        val cols = listOf(ColumnId.TITLE, ColumnId.ARTIST, ColumnId.BPM, ColumnId.KEY, ColumnId.MYTAG, ColumnId.TIME, ColumnId.STEMS)
         val widths = BrowserColumns.layout(cols, 1800, 2f)
         assertEquals(1800, widths.sum())
         assertEquals((66 * 2f).toInt(), widths[cols.indexOf(ColumnId.BPM)])

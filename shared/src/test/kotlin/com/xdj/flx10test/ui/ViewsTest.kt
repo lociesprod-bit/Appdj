@@ -51,7 +51,7 @@ class ViewsTest {
         layout(v)
         draw(v)
         assertEquals(
-            listOf("10A - Ben Tren Tang Lau x Iconic HD - (Deep House)", "Iconic", "127.00", "10A", "Deep House · Viet Nam", "4:18", "STEMS"),
+            listOf("10A - Ben Tren Tang Lau x Iconic HD - (Deep House)", "127.00", "10A", "Deep House · Viet Nam", "4:18", "★★★★☆", "STEMS"),
             v.texts,
         )
         v.bind(row, listOf(ColumnId.TITLE, ColumnId.KEY, ColumnId.RATING), KeyMatch.NONE, false)
@@ -110,8 +110,10 @@ class ViewsTest {
     fun prefsPersistColumnsAndSort() {
         val prefs = BrowserPrefs(activity.getSharedPreferences("t", Context.MODE_PRIVATE))
         assertEquals(ColumnId.DEFAULT, prefs.columns)
-        val cols = prefs.toggle(ColumnId.RATING, true)
-        assertTrue(ColumnId.RATING in cols)
+        val cols = prefs.toggle(ColumnId.ARTIST, true)
+        assertTrue(ColumnId.ARTIST in cols)
+        assertTrue(ColumnId.ARTIST !in prefs.toggle(ColumnId.ARTIST, false))
+        prefs.toggle(ColumnId.ARTIST, true)
         assertEquals(cols, prefs.columns)
         assertEquals(ColumnId.entries.filter { it in cols }, cols) // giữ thứ tự chuẩn
         prefs.toggle(ColumnId.TITLE, false)
