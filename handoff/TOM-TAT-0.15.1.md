@@ -51,7 +51,29 @@ Ngày 05/11/2026 (cập nhật sau LOG Lab trên tablet). Viết trên cloud vì
   - 3 luồng chậm hơn 2, vì 4 stem chia thành 2 đợt. Dùng **4 luồng khi rảnh, 2 khi đang phát** (mục 3.5).
   - Pipeline app 0.15.0 chậm ~2,7 lần so với giải mã thô: ~20 s/stem cho bài 290 s, trong khi giải mã thô ~6,2 s/stem cho bài 246 s. Cần đo trên Mac (mục 3.5 bước 6).
 - **Cột mặc định:** theo lựa chọn của bạn trong Lab, Track Title | BPM | Key | MyTag | Time | Rating | Stems (mục 3.6).
-- **Chưa có:** số đo "Mở lại có đệm" và "Mở file cho MediaExtractor" (lab2). Chờ LOG lần sau.
+- **Chưa có:** số đo "Mở lại có đệm" và "Mở file cho MediaExtractor". Đã đo ở lab2, xem mục 2c.
+
+## 2c. Số đo lab2 trên tablet (4 LOG `LAB_20261105-1820…1831`)
+
+| Việc | FILE (có quyền truy cập mọi tệp) | SAF | 0.15.0 |
+|---|---|---|---|
+| ↻ Quét đầy đủ | **3 938 ms** (liệt kê 3 158 · XML 206 · ghép 528) | 8 768 ms (liệt kê 7 606) | 28–44 s |
+| Mở lại có đệm: danh sách sẵn sàng | 732 ms | 609 ms | thẻ SD 0,8 s, cả thư viện 9–10,5 s |
+| Mở lại có đệm: kiểm tra 189 thư mục | 40 ms | 413 ms (190 query) | — |
+| Mở lại có đệm: tổng | **774 ms** | **1 027 ms** | 9–10,5 s |
+| Resolve 20 bài | — | TB 2,9 ms (chậm nhất 12,7) | cách cũ 6 101 ms |
+| Mở file cho MediaExtractor (content URI) | chưa đo | TB 91 ms, lần đầu 371 ms | `sequentialSourceSetup` ~340 ms |
+| 4 stem, bài 218 s (giải mã thô) | — | 1 luồng 22,1 s · 2 luồng 11,7 s · **4 luồng 9,4 s** | ~80 s |
+
+**Kết luận:**
+- **Mọi mục tiêu đo được trong Lab đều đạt:**
+  - mở thư viện có đệm < 2 s (đạt 0,8–1 s);
+  - resolve < 5 ms (đạt ~3 ms);
+  - quét File ~4 s, SAF ~9 s;
+  - stems 4 luồng ~9–11 s.
+- **Thời gian liệt kê bằng File dao động:** lần này mất 3,2 s ("lạnh"), lần trước 0,6 s vì đo ngay sau một lần quét SAF nên đã có cache. Có đệm thì lần mở sau chỉ cần kiểm tra mtime (40 ms), không phải liệt kê lại.
+- **Thiếu (tuỳ chọn):** thời gian mở file cho MediaExtractor bằng **đường dẫn File**. Lúc bấm "Đo resolve" chưa có quyền. Khi ghép trên Mac, so `sequentialSourceSetup` trong LOG app giữa content URI và đường dẫn.
+- **Lab đã xong việc đo.** Phần còn lại phải làm trên Mac (mục 3 và 7): ghép `shared/` vào app, tìm vì sao pipeline stems chậm ~2,7 lần so với giải mã thô (3.5 bước 6), chạy test native, ký bằng key thật.
 
 ## 3. Việc cần nối vào app thật
 
