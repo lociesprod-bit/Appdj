@@ -1,0 +1,18 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Ký APK: KHÔNG BAO GIỜ commit key (repo public)
+*.jks
+*.keystore
+keystore.properties
+
+# APK/AAB build ra
+*.apk
+*.aab
