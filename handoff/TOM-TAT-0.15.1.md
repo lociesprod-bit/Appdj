@@ -239,10 +239,32 @@ Bạn gửi ảnh màn EXPORT / PREPARE (zoom 0,27 s) và ảnh rekordbox. Có 4
      - `RekordboxXml`: gom **mọi** `TEMPO` của bài thành `List<BeatGrid.Companion.Tempo>` rồi gọi `BeatGrid.fromTempos(tempos, duration)`;
      - PQTZ: gom **mọi** beat (ms, beat 1–4) rồi gọi `BeatGrid.fromBeats(ms, beatInBar)`;
      - engine native hiện chỉ có `setGrid(deck, gen, bpm, beat0)`: tạm dùng `grid.fitConstant()`. Đây là BPM khớp mọi beat theo bình phương tối thiểu (ví dụ 125,996), nên hết trôi với grid cố định. Bài đổi tempo thật (`maxErrorMs` > ~5) cần API native mới, ví dụ `setGridBeats(deck, gen, double[] beatFrames)`, để quantize/beat jump/loop/SYNC theo đúng từng beat. Phần vẽ grid dùng `BeatGrid.linesIn` cho mọi trường hợp.
-   - **Nguyên nhân 2 (cần số đo): lệch cố định theo định dạng.**
-     - Bộ giải mã MP3 của Android (`c2.android.mp3.decoder`) và của rekordbox xử lý encoder delay (LAME, thường 576 mẫu) / decoder delay (529 mẫu) khác nhau, có thể lệch tới ~25 ms. LOG 0.15.0 đã gợi ý: stems MP3 lệch bài gốc đúng **529–530 frame**.
-     - **Lab3 "Đo lệch grid"** giải mã ~20 bài đủ các định dạng, so grid XML với kick (`GridOffsetEstimator`), rồi in lệch trung vị từng định dạng (MP3/WAV/M4A/FLAC) và độ trôi. Chênh lệch giữa các định dạng là phần cần bù.
-     - Sau khi có LOG: thêm `gridOffsetSec(format, mp3Info)` khi dựng grid (`grid.shifted(offset)`), dựa trên `Mp3Gapless.parse` (LAME delay/padding) và khoá `encoder-delay` của MediaExtractor.
+   - **Nguyên nhân 2 (đã đo): lệch cố định theo định dạng.** Bộ giải mã của Android (`c2.android.mp3.decoder`, `c2.android.aac.decoder`) và của rekordbox xử lý độ trễ đầu file khác nhau.
+     - **Số đo** Lab3 "Đo lệch grid", `LAB_20261105-200628.log`, 13 bài, dương = audio muộn hơn grid:
+
+       | Định dạng | Từng bài (ms) | Trung vị | So với lossless |
+       |---|---|---|---|
+       | WAV ×5 (48 kHz) | +1,0 · +3,3 · +1,2 · +2,3 · +0,7 | +1,2 | mốc chuẩn |
+       | FLAC ×2 | +1,4 · −5,4 | +1,4 | ≈ 0 |
+       | MP3 không Xing/LAME ×5 (44,1 kHz) | −8,8 · −7,5 · −8,5 · −3,4 · −8,0 | −8,0 | **−9,2 ms (≈ −406 mẫu)** |
+       | M4A/AAC ×1 (encoder-delay 2112) | +12,0 | +12,0 | **+10,8 ms (tạm, 1 bài)** |
+       | MP3 có LAME | — | — | chưa đo (lab4 đo riêng nhóm này) |
+
+     - **Diễn giải:**
+       - Lossless trùng grid rekordbox; khoảng +1,2 ms là độ trễ của đỉnh onset trong phép đo.
+       - **MP3 không LAME: audio trên Android sớm ~9 ms**, nên grid phải dời sớm 9 ms. Đây là phần "hơi lệch" bạn thấy.
+       - Độ trôi nhỏ (trung vị ±0,3 ms/phút).
+       - Bài nhiều mốc TEMPO (85 mốc, đổi tempo thật) khớp tốt với `BeatGrid` mới (IQR 7,8 ms).
+     - **Sửa:** chép `wave/GridOffsets.kt`. Khi dựng grid cho một bài, **cả grid từ XML lẫn từ ANLZ/PQTZ** (cùng bộ giải mã rekordbox):
+       ```kotlin
+       val kind = GridOffsets.kindOf(ext, Mp3Gapless.parse(Mp3Head.read(stream)), extractorMime)
+       val grid = BeatGrid.fromTempos(tempos, duration)!!.shifted(GridOffsets.seconds(kind, sampleRate, userOverridesMs))
+       ```
+       - `GridOffsets.DEFAULTS` lưu theo **số mẫu**: MP3 −406 (−9,2 ms ở 44,1 kHz), M4A +476 (+10,8 ms, tạm), lossless 0.
+       - `Mp3Head.read` bỏ qua thẻ ID3 bằng `skip`, nên ảnh bìa lớn không làm hỏng việc đọc LAME.
+       - Với engine native, `grid.shifted(...).fitConstant()` cho `beat0` đã bù.
+     - **⚙ "Bù lệch grid theo định dạng" (nâng cao):** ô ±ms cho MP3 không LAME / MP3 có LAME / M4A, mặc định theo bảng. Lưu thành `Map<Kind, Double>` rồi truyền vào `userOverridesMs`.
+     - **Còn chờ LOG lab4:** số đo MP3 có LAME và thêm M4A. Khi có thì cập nhật `DEFAULTS` và bỏ đánh dấu "tạm".
 
 4. **SYNC bấm đôi.**
    - **0.15.0:** `DjController.syncPress(d)` bật/tắt khoá `synced[d]` + `Engine.syncTo(d, m, true)`. Khi khoá, `tempoSlider()` bị bỏ qua. Khi tắt, gọi `tempoSlider(d, slider[d])` nên **tempo nhảy về vị trí thanh trượt**.
@@ -286,6 +308,7 @@ shared/src/main/kotlin/com/xdj/flx10test/
   wave/DetailWave.kt          dữ liệu sóng chi tiết 16 frame/khối (min/max có dấu + bass/mid/treble), builder nạp dần
   wave/DetailWaveView.kt      vẽ sóng thật khi zoom sâu + GridStyle đậm + vạch phát trắng; so sánh grid cũ
   wave/GridOffsetEstimator.kt đo lệch grid so với kick (lệch cố định, độ trôi); Mp3Gapless đọc LAME delay/padding
+  wave/GridOffsets.kt         bảng bù lệch grid theo định dạng (MP3 −406 mẫu, M4A +476 mẫu, lossless 0); Mp3Head đọc header bỏ qua ID3
   sync/BeatSync.kt            SyncTapDetector (bấm đôi), BeatSync.instantMatch, TempoSlider, TempoPickup
 lab/                          FLX10 Lab (applicationId com.xdj.flx10test.lab)
 handoff/                      file này + browse-preview.png + wave-preview-*.png
@@ -297,7 +320,7 @@ handoff/                      file này + browse-preview.png + wave-preview-*.pn
 
 ## 5. Test đã chạy (cloud, Linux)
 
-- **`./gradlew :shared:testDebugUnitTest :lab:testDebugUnitTest`:** 77 + 10 test **PASS**, gồm cả Robolectric SDK 34. Các nhóm:
+- **`./gradlew :shared:testDebugUnitTest :lab:testDebugUnitTest`:** 81 + 10 test **PASS**, gồm cả Robolectric SDK 34. Các nhóm:
   - `CamelotKey`/`KeyMatch`: parse mọi dạng key, vòng 12↔1, A↔B, transpose, tempo → nửa cung;
   - `MyTags`: tag tiếng Việt, khối nằm giữa comment, trùng tag;
   - `SafDocId`: tên có dấu cách, `#`, `%`, NFD;
@@ -309,13 +332,14 @@ handoff/                      file này + browse-preview.png + wave-preview-*.pn
   - Views: `TrackRowView`, `BrowserHeaderView`, `SettingsToggleSection`, `BrowserPrefs`, cắt chữ "…";
   - `BeatGrid`: mọi mốc TEMPO, Battito, đổi tempo, PQTZ 125,996 BPM so với 126,00, bù lệch;
   - `GridOffsetEstimator`: bài giả kick 55 Hz, cài lệch 12 ms thì đo ra 12,0 ms (IQR 0,6); phát hiện trôi khi BPM làm tròn;
-  - `Mp3Gapless`: LAME delay/padding, bỏ qua ID3;
+  - `Mp3Gapless`/`Mp3Head`: LAME delay/padding, bỏ qua ID3 (kể cả ảnh bìa 300 KB);
+  - `GridOffsets`: phân loại định dạng, −9,2 ms MP3 / +10,8 ms M4A ở 44,1 kHz, đổi theo tần số mẫu, ghi đè tay;
   - `DetailWaveBuilder`/`DetailWaveView`: giữ hình sóng có dấu, màu theo dải, vẽ ở zoom 0,27 s và 4 s;
   - SYNC: bấm đôi, khớp pha beat/ô nhịp, ×2/÷2, vị trí thanh, soft takeover;
   - Lab: đọc rekordbox XML (kể cả nhiều mốc TEMPO), tách `.serato-stems`, khởi động Activity.
 - **Lưu ý:** test chạy với `LC_ALL=C.UTF-8` (đã đặt trong `build.gradle.kts`). Locale POSIX làm JVM đổi tên file tiếng Việt thành "?".
 - **`:shared:lintDebug`, `:lab:lintRelease`:** 0 lỗi, 0 cảnh báo.
-- **APK Lab:** `apksigner` đạt (v2), `aapt2` (`com.xdj.flx10test.lab` 3/0.15.1-lab3, target 34), `zipalign -c -p 4` đạt.
+- **APK Lab:** `apksigner` đạt (v2), `aapt2` (`com.xdj.flx10test.lab` 4/0.15.1-lab4, target 34), `zipalign -c -p 4` đạt.
 - **Chưa làm được ở cloud:**
   - test native ASan/UBSan/TSan;
   - Robolectric SDK 29;
@@ -323,7 +347,7 @@ handoff/                      file này + browse-preview.png + wave-preview-*.pn
 
 ## 6. FLX10 Lab: thử trên tablet trước khi ghép
 
-- **Cài đặt:** cài `FLX10-Lab-0.15.1-lab3.apk`. Lab có tên gói riêng nên **không đụng FLX10 DJ**. Các bản Lab ký cùng key tạm nên cài đè được.
+- **Cài đặt:** cài `FLX10-Lab-0.15.1-lab4.apk`. Lab có tên gói riêng nên **không đụng FLX10 DJ**. Các bản Lab ký cùng key tạm nên cài đè được.
 - **Key ký:** key tạm (`CN=FLX10 Lab (key tam thoi)`, SHA-256 `e2d1bac1…d697cf34`) chỉ có trên máy cloud, không commit vì repo public. Build lại Lab trên Mac thì ký bằng key khác, nên cần gỡ Lab cũ trước khi cài.
 
 **Các bước (từ lab2):**
@@ -347,7 +371,10 @@ handoff/                      file này + browse-preview.png + wave-preview-*.pn
   - **◀ Beat / Beat ▶**, **± Zoom**, **0,27 s**, **Đầu bài / Giữa / Cuối**;
   - **Bù ±1/±10 ms** để thử dời grid; **Bù theo đo** dùng số đo tự động;
   - kéo ngang để tua, chụm hai ngón để zoom.
-- **Đo lệch grid** (màn chính): ~20 bài nhiều định dạng → LOG từng bài và tổng kết theo định dạng.
+- **Từ lab4:** màn Sóng & grid mở ra là đã **bù theo định dạng** (dòng "Bù theo định dạng"); có nút **Bù theo định dạng** / **Bù theo đo**. Khi bấm **Đóng**, LOG ghi số ms đang xem và phần chỉnh thêm.
+- **Đo lệch grid** (màn chính):
+  - lab4 chọn 5 MP3 có LAME + 5 MP3 không LAME + tối đa 5 M4A + 3 WAV + 2 FLAC;
+  - tổng kết so với mốc lossless kèm "còn lệch" sau bảng bù.
 
 **Đọc LOG Lab:**
 - **"Liệt kê All Music DJ bằng FILE/SAF: … ms":** so với 28–44 s của 0.15.0.

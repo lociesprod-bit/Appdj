@@ -17,6 +17,7 @@ import android.widget.TextView
 import com.xdj.flx10test.wave.BeatGrid
 import com.xdj.flx10test.wave.DetailWaveView
 import com.xdj.flx10test.wave.GridOffsetEstimator
+import com.xdj.flx10test.wave.GridOffsets
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
 import kotlin.math.roundToLong
@@ -43,6 +44,7 @@ class WaveActivity : Activity() {
     private var oldGrid: BeatGrid? = null
     private var measured: GridOffsetEstimator.Result? = null
     private var offsetMs = 0.0
+    private var formatOffsetMs = 0.0
     private var showOld = true
     private var baseInfo = ""
     private var duration = 0.0
@@ -94,11 +96,15 @@ class WaveActivity : Activity() {
             val r = g?.let { GridOffsetEstimator.estimate(d.mono, d.count, d.sampleRate, it) }
             val fit = g?.fitConstant()
             val head = tempos.firstOrNull()
+            val kind = GridOffsets.kindOf(t.relPath.substringAfterLast('.'), d.mp3, d.mime)
+            val formatMs = GridOffsets.seconds(kind, d.sampleRate) * 1000
             baseInfo = "${t.row.title} · ${d.describeFormat()}\n" +
                 (if (head == null) "Không có grid trong XML" else "XML: ${tempos.size} mốc TEMPO · BPM đầu ${head.bpm} · Inizio ${head.inizio} s · Battito ${head.battito}") +
                 (fit?.let { " · BPM khớp mọi mốc %.3f (lệch tối đa %.1f ms)".format(it.bpm, it.maxErrorMs) } ?: "") +
-                "\nĐo lệch so với kick: " + (r?.describe() ?: "không đo được")
-            log.line("  grid XML ${tempos.size} mốc · " + (r?.describe() ?: "không đo được lệch"))
+                "\nBù theo định dạng: " + GridOffsets.describe(kind, d.sampleRate) +
+                "\nĐo lệch so với kick (grid chưa bù): " + (r?.describe() ?: "không đo được") +
+                (r?.let { " → sau bù định dạng còn %+.1f ms (lossless đo ~+1,2 ms)".format(it.medianMs - formatMs) } ?: "")
+            log.line("  grid XML ${tempos.size} mốc · bù định dạng " + GridOffsets.describe(kind, d.sampleRate) + " · " + (r?.describe() ?: "không đo được lệch"))
             log.flush(contentResolver, access.saf)
             ui.post {
                 if (closed) return@post
@@ -106,6 +112,8 @@ class WaveActivity : Activity() {
                 grid = g
                 oldGrid = old
                 measured = r
+                formatOffsetMs = (formatMs * 10).roundToLong() / 10.0
+                offsetMs = formatOffsetMs
                 wave.wave = d.detail
                 wave.secondsVisible = 1.0
                 wave.positionSec = g?.let { firstDownbeatAfter(it, 30.0.coerceAtMost(d.durationSec / 3)) } ?: (d.durationSec / 3)
@@ -176,12 +184,19 @@ class WaveActivity : Activity() {
         add(button("Bù −1") { nudge(-1.0) })
         add(button("Bù +1") { nudge(1.0) })
         add(button("Bù +10") { nudge(10.0) })
-        add(button("Bù theo đo") { measured?.let { offsetMs = (it.medianMs * 10).roundToLong() / 10.0; applyGrid() } })
+        add(button("Bù theo định dạng") { offsetMs = formatOffsetMs; applyGrid() })
+        add(button("Bù theo đo") { measured?.let { offsetMs = ((it.medianMs - 1.2) * 10).roundToLong() / 10.0; applyGrid() } })
         add(button("Bù = 0") { offsetMs = 0.0; applyGrid() })
         compareButton = button("Grid cũ 0.15.0: BẬT") { showOld = !showOld; applyGrid() }
         add(compareButton)
         add(button("Đóng") {
-            track?.let { LabSession.log?.line("Sóng & grid: đóng ${it.row.title.take(40)} · bù lệch chọn tay %+.1f ms".format(offsetMs)) }
+            track?.let {
+                LabSession.log?.line(
+                    "Sóng & grid: đóng ${it.row.title.take(40)} · bù đang xem %+.1f ms (bù định dạng %+.1f ms, chỉnh thêm %+.1f ms)".format(
+                        offsetMs, formatOffsetMs, offsetMs - formatOffsetMs,
+                    ),
+                )
+            }
             finish()
         })
         root.addView(HorizontalScrollView(this).apply { addView(bar) })

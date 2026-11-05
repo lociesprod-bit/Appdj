@@ -20,8 +20,8 @@ android {
         applicationId = "com.xdj.flx10test.lab"
         minSdk = 29
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.15.1-lab3"
+        versionCode = 4
+        versionName = "0.15.1-lab4"
     }
 
     signingConfigs {

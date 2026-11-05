@@ -12,6 +12,13 @@ import java.nio.ByteOrder
 
 /** Giải mã cả bài bằng MediaCodec (giống app) để Lab vẽ sóng chi tiết và đo lệch grid. */
 object LabDecoder {
+    /** LAME/Xing của một MP3: bỏ qua ID3 (ảnh bìa) rồi chỉ đọc 16 KB. */
+    fun mp3Info(access: SdAccess, track: LabTrack): Mp3Gapless.Info? = try {
+        access.openInputStream(track.documentId).use { Mp3Gapless.parse(com.xdj.flx10test.wave.Mp3Head.read(it)) }
+    } catch (_: Exception) {
+        null
+    }
+
     class Decoded(
         val mono: ShortArray,
         val count: Int,
@@ -40,20 +47,7 @@ object LabDecoder {
 
     fun decode(ctx: Context, access: SdAccess, track: LabTrack, buildDetail: Boolean, cancelled: () -> Boolean = { false }): Decoded {
         val started = System.nanoTime()
-        val mp3 = if (track.relPath.endsWith(".mp3", true)) {
-            access.openInputStream(track.documentId).use { input ->
-                val head = ByteArray(256 * 1024)
-                var n = 0
-                while (n < head.size) {
-                    val r = input.read(head, n, head.size - n)
-                    if (r < 0) break
-                    n += r
-                }
-                Mp3Gapless.parse(head.copyOf(n))
-            }
-        } else {
-            null
-        }
+        val mp3 = if (track.relPath.endsWith(".mp3", true)) mp3Info(access, track) else null
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
